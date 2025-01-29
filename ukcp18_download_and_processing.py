@@ -1,6 +1,4 @@
 import ukcp18_processing_functions as processing
-import pandas as pd
-import os
 import xarray as xr 
 import json
 
@@ -20,20 +18,14 @@ def call_api_and_process_ukcp_data(ukcp_url: str,
     Process UKCP18 daily precipitation data for a given date (month + year), ensemble member and time slice 
     """
 
+    # client is using the following environment: /home/jbanorthwest.co.uk/samhardy/miniforge3/envs/2024s1475-env/bin/python 
+    client = processing.initialise_dask_client(n_workers=8, threads_per_worker=1, memory_limit="4GB")
+
     config = load_config(config_file_path)
-    mask_nc_filename = "UKWC_Cleaned_land-cpm_uk_2.2km.nc"
-    csv_filename = "YearsMonths_byBinCounts_Rand_OtherYears.csv"
+    mask_ds = xr.open_dataset(config["mask_nc_filename"])
+    mask_1D = mask_ds.stack(location=("grid_latitude", "grid_longitude"))
 
-    profile_selected_month = pd.read_csv(os.path.join("./", csv_filename))
-    mask_nc = os.path.join("./", mask_nc_filename)
-    mask_orig = xr.open_dataset(mask_nc)
-    mask_1D = mask_orig.stack(location=("grid_latitude", "grid_longitude"))
-
-    projection_profile = profile_selected_month[profile_selected_month['Projection_slice_ID']
-                                                == projection_id]
-    
-    processing.call_main(projection_profile, 
-                         ukcp_url,
+    processing.call_main(ukcp_url,
                          config, 
                          out_file_path, 
                          ensemble_member_id,

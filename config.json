@@ -1,4 +1,6 @@
 {
+    "mask_nc_filename": "/mnt/metdata/2024s1475/InputData/UKWC_Cleaned_land-cpm_uk_2.2km.nc",
+    
     "remove_items": ["ensemble_member_id", 
                      "grid_latitude_bnds", 
                      "grid_longitude_bnds", 

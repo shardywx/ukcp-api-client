@@ -13,6 +13,7 @@ import convert_ll2str as c2str
 from datetime import datetime
 from typing import Tuple, Dict
 from dateutil.relativedelta import relativedelta
+from dask.distributed import Client
 
 def process_ukcp_data(input_file_path: str,
                       output_file_path: str, 
@@ -31,7 +32,7 @@ def process_ukcp_data(input_file_path: str,
     year: year to analyse (e.g. 2035)
     month: month to analyse (e.g. 8 for August)
     var_id: cf-compliant variable ID (e.g. pr, tas)
-    member_id: ensemble member ID (01,04,05,...,15)
+    member_id: ensemble member ID (01, 04, 05, ..., 15)
     mask_1D: xarray Dataset containing 1D land-ocean mask 
     """
 
@@ -55,27 +56,29 @@ def process_ukcp_data(input_file_path: str,
             for wcid in range(config["NUMBER_OF_WC"]):
                 print(f"Working on water company {str(wcid)}")
                 ds_mask = ds.where(mask_1D.WCID == wcid, drop=True)
+
+                # print(f"Starting dry days calculation...")
+                # get_dry_days(ds_mask, 
+                #              year, 
+                #              month,
+                #              member_id, 
+                #              wcid, 
+                #              proj_id, 
+                #              output_file_path)
+                
+                # print(f"Starting total rainfall calculation...")
+                # get_month_total(ds_mask, 
+                #                 year, 
+                #                 month, 
+                #                 member_id, 
+                #                 wcid, 
+                #                 proj_id, 
+                #                 output_file_path)
+
                 for duration_str, start_hour in config["accum_duration_start"].items():
                     duration = int(duration_str)
                     start = get_start_year(year, month, start_hour)
                     precip = ds_mask.where(ds['time'] >= start, drop=True)
-                    
-                    print("Starting dry days calculation!")
-                    get_dry_days(precip, 
-                                 year, 
-                                 month, 
-                                 member_id, 
-                                 wcid, 
-                                 proj_id, 
-                                 output_file_path)
-                    print("Starting total rainfall calculation!")
-                    get_month_total(precip, 
-                                    year, 
-                                    month, 
-                                    member_id, 
-                                    wcid, 
-                                    proj_id, 
-                                    output_file_path)
 
                     print(f"Calculating {str(duration)}-h accumulated precip, starting at {str(start_hour)}Z")
                     if duration > 1:
@@ -85,33 +88,30 @@ def process_ukcp_data(input_file_path: str,
                         ds_window['time'] = ds_window["time"].dt.strftime("%Y-%m-%d %H:%M")
                         df_window = ds_window.to_dataframe()
                         df_window.index = df_window.index.droplevel(['grid_latitude', 'grid_longitude'])
-
                         # UNCOMMENT TO CALCULATE PRECIPITATION PROFILES
-                        # get_pr_profile(df_window, member_id, month, duration, wcid, output_file_path, proj_id, config)
-
-                        if duration == 3 or duration == 6:
-                            get_bin_counts(df_window, 
-                                           year, 
-                                           month, 
-                                           member_id, 
-                                           duration, 
-                                           wcid, 
-                                           output_file_path,
-                                           proj_id, 
-                                           config)
+                        # get_pr_profile(df_window,member_id,month,duration,wcid,output_file_path,proj_id,config)
 
                     else:
-                        df_window = precip.to_dataframe()
+                        ds_window = precip
+                        ds_window = ds_window.rename({"pr": "pr_sum"})
+                        ds_window = ds_window.assign(pr=precip.pr)
+                        ds_window['time'] = ds_window["time"].dt.strftime("%Y-%m-%d %H:%M")
+                        df_window = ds_window.to_dataframe()
                         df_window = df_window[df_window['month_number'] == month]
                         df_window.index = df_window.index.droplevel(['grid_latitude', 'grid_longitude'])
-                        get_pr_profile(df_window, 
-                                       member_id, 
-                                       month, 
-                                       duration, 
-                                       wcid, 
-                                       output_file_path,
-                                       proj_id, 
-                                       config)
+                        # UNCOMMENT TO CALCULATE PRECIPITATION PROFILES
+                        # get_pr_profile(df_window,member_id,month,duration,wcid,output_file_path,proj_id,config)
+
+                    print("Starting bin counts calculation!")
+                    get_bin_counts(df_window, 
+                                   year,
+                                   month, 
+                                   member_id, 
+                                   duration, 
+                                   wcid, 
+                                   output_file_path,
+                                   proj_id, 
+                                   config)
 
                     precip = None
 
@@ -270,6 +270,10 @@ def get_bin_counts(df_prcp: pd.DataFrame,
     Calculate rainfall counts for specified bins relevant to the chosen event duration (e.g. 1-h, 3-h, 6-h)
     For September, the first and second halves are counted separately for a reason that Kay explained to be (but I've forgotten)
     """
+    import pandas as pd
+    import cftime
+    import os
+
     BINS = {int(key): value for key, value in config["BINS"].items()}
     bins = BINS[duration]
     filename = os.path.join(output_file_path, f"Rainfall_bin_counts_{duration}h_ens{member_id}_proj{proj_id}.csv")
@@ -278,27 +282,51 @@ def get_bin_counts(df_prcp: pd.DataFrame,
     total_count = []
 
     if month == 9:
+        early_sept_count = []
         df_prcp_copy = df_prcp
         df_prcp_copy.insert(0, 'Time', df_prcp_copy.index)
         df_prcp_copy['Time'] = df_prcp_copy['Time'].apply(str_to_cftime360)
         mid_sept_date = cftime.Datetime360Day(year, month, 15, 0, 30, 0)
         start_sept_date = cftime.Datetime360Day(year, month, 1, 0, 30, 0)
-        df_prcp_copy = df_prcp_copy[(df_prcp_copy['Time'] >= start_sept_date) & (df_prcp_copy['Time'] <= mid_sept_date)]
+        end_sept_date = cftime.Datetime360Day(year, month, 30, 0, 30, 0)
+
+        # calculate 1-15 September separately from the whole month 
+        #df_prcp_early_sept = df_prcp_copy[(df_prcp_copy['Time'] >= start_sept_date) & (df_prcp_copy['Time'] <= mid_sept_date)]
+        df_prcp_early_sept = df_prcp_copy[df_prcp_copy['Time'] <= mid_sept_date]
+        df_prcp_total_sept = df_prcp_copy[df_prcp_copy['Time'] <= end_sept_date]
+
         for i in range(1, len(bins)):
-            df_count = df_prcp_copy[(df_prcp_copy['pr_sum'] > bins[i - 1]) & (df_prcp_copy['pr_sum'] < bins[i])]
+            df_early_sept_count = df_prcp_early_sept[(df_prcp_early_sept['pr_sum'] > bins[i - 1]) & (df_prcp_early_sept['pr_sum'] < bins[i])]
+            df_count = df_prcp_total_sept[(df_prcp_total_sept['pr_sum'] > bins[i - 1]) & (df_prcp_total_sept['pr_sum'] < bins[i])]
+            #df_count = df_prcp_copy[(df_prcp_copy['pr_sum'] > bins[i - 1]) & (df_prcp_copy['pr_sum'] < bins[i])]
+            early_sept_count.append(df_early_sept_count.shape[0])
             total_count.append(df_count.shape[0])
+
+        # trigger computation for all counts at once 
+        early_sept_count = [df_early_sept_count.compute() if hasattr(df_early_sept_count, "compute") else df_early_sept_count for df_early_sept_count in early_sept_count]
+        total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
+
+        early_sept_data_list = [proj_id, member_id, year, 13, wcid, early_sept_count]
+        early_sept_count_df = pd.DataFrame([early_sept_data_list], columns=cols)
         data_list = [proj_id, member_id, year, month, wcid, total_count]
         total_count_df = pd.DataFrame([data_list], columns=cols)
         save(filename, total_count_df)
+        save(filename, early_sept_count_df)
 
         data_list = None
         total_count = None
+        early_sept_count = None
         total_count_df = None
+        early_sept_count_df = None
     
     else:
         for i in range(1, len(bins)):
             df_count = df_prcp[(df_prcp['pr_sum'] > bins[i - 1]) & (df_prcp['pr_sum'] < bins[i])]
             total_count.append(df_count.shape[0])
+
+        # trigger computation for all counts at once 
+        total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
+
         data_list = [proj_id, member_id, year, month, wcid, total_count]
         total_count_df = pd.DataFrame([data_list], columns=cols)
         save(filename, total_count_df)
@@ -323,12 +351,21 @@ def get_dry_days(ds_precip: xr.Dataset,
 
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         if month == 9:
-            start_sept = cftime.Datetime360Day(year, month, 15, 0, 30, 0)
-            ds_sept = ds_precip.where((ds_precip['time'] <= start_sept) & (ds_precip['time'].dt.month == month), drop=True)
+            mid_sept = cftime.Datetime360Day(year, month, 15, 0, 30, 0)
+            ds_early_sept = ds_precip.where((ds_precip['time'] <= mid_sept) & (ds_precip['time'].dt.month == month), drop=True)
+            ds_sept = ds_precip.where(ds_precip['time'].dt.month == month, drop=True)
+
             daily_precip = ds_sept['pr'].resample(time="D").sum()
             da_dry_days_sept = daily_precip.where(daily_precip < 0.1)
             da_dry_day_count_sept = da_dry_days_sept.count(dim="time")
-            save_dry_counts(da_dry_day_count_sept, year, 13, member_id, wcid, proj_id, output_file_path)
+            save_dry_counts(da_dry_day_count_sept, year, month, member_id, wcid, proj_id, output_file_path)
+
+            # calculate 1-15 September separately from the whole month (and assign to month '13')
+            daily_precip_1_15 = ds_early_sept['pr'].resample(time="D").sum()
+            da_dry_days_sept_1_15 = daily_precip_1_15.where(daily_precip_1_15 < 0.1)
+            da_dry_day_count_sept_1_15 = da_dry_days_sept_1_15.count(dim="time")
+            save_dry_counts(da_dry_day_count_sept_1_15, year, 13, member_id, wcid, proj_id, output_file_path)
+
         else:
             ds_month = ds_precip.where(ds_precip['time'].dt.month == month, drop=True)
             daily_precip = ds_month['pr'].resample(time="D").sum()
@@ -351,10 +388,16 @@ def get_month_total(ds_precip: xr.Dataset,
 
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         if month == 9:
-            start_sept = cftime.Datetime360Day(year, month, 15, 0, 30, 0)
-            ds_sept = ds_precip.where((ds_precip['time'] <= start_sept) & (ds_precip['time'].dt.month == month), drop=True)
+            mid_sept = cftime.Datetime360Day(year, month, 15, 0, 30, 0)
+            ds_early_sept = ds_precip.where((ds_precip['time'] <= mid_sept) & (ds_precip['time'].dt.month == month), drop=True)
+            ds_sept = ds_precip.where(ds_precip['time'].dt.month == month, drop=True)
+
             ds_sept_total = ds_sept.sum(dim='time')
-            save_month_total(ds_sept_total, year, 13, member_id, wcid, proj_id, output_file_path)
+            save_month_total(ds_sept_total, year, month, member_id, wcid, proj_id, output_file_path)
+
+            ds_early_sept_total = ds_early_sept.sum(dim='time')
+            save_month_total(ds_early_sept_total, year, 13, member_id, wcid, proj_id, output_file_path)
+
         else:
             start = cftime.Datetime360Day(year, month, 1, 0, 30, 0)
             ds_month = ds_precip.where(ds_precip['time'] >= start, drop=True)
@@ -403,7 +446,8 @@ def save_month_total(ds_month_total: xr.Dataset,
 
 def get_previous_month_url(url: str) -> Tuple[int, int, str]: 
     """ 
-    Extract month and year from a UKCP url, and output another url for the previous month 
+    Extract month and year from a UKCP url
+    Return the current year and month, plus the UKCP url for the previous month 
     """
     match = re.search(r"(\d{4})(\d{2})\d{2}-\d{8}", url)
     if match:
@@ -423,7 +467,7 @@ def get_previous_month_url(url: str) -> Tuple[int, int, str]:
         # Format the result as "YYYY-MM"
         previous_month_str = previous_month_date.strftime("%Y%m")
         updated_url = re.sub(r"(\d{4}\d{2})\d{2}-\d{8}", f"{previous_month_str}01-{previous_month_str}30", url)
-        return previous_year, previous_month, updated_url
+        return year, month, updated_url
     else:
         raise ValueError("Date not found in URL!")
 
@@ -448,41 +492,6 @@ def get_start_year(year: int,
         start = cftime.Datetime360Day(year, month, 1, 0, 30, 0)
 
     return start
-
-
-def call_main(proj_df: pd.DataFrame, 
-              ukcp_url: str,
-              config: Dict,
-              output_file_path: str,
-              member_id: int,
-              var_id: str,
-              proj_id: str,
-              mask_1D: xr.Dataset
-              ):
-    """ 
-    Call the main function to read in UKCP data for the chosen year and month 
-    """
-
-    year, month, previous_month_url = get_previous_month_url(ukcp_url)
-
-    df_row = proj_df[(proj_df['Month'] == month) & (proj_df['Year'] == year)]
-    if df_row.empty:
-        print(f"No data found for Month: {month}, Year: {year}")
-
-    if (year==1980 and month==12) or (year==2020 and month==12) or (year==2060 and month==12):
-        input_file_path = [ukcp_url]
-    else:
-        input_file_path = [previous_month_url, ukcp_url]
-
-    process_ukcp_data(input_file_path, 
-                      output_file_path,
-                      config,
-                      year, 
-                      month, 
-                      member_id, 
-                      var_id,
-                      proj_id, 
-                      mask_1D)
 
 
 def check_dir(file_name: str):
@@ -511,10 +520,61 @@ def rolling_window_sum(ds: xr.Dataset,
                        window_size: int
                        ) -> xr.Dataset:
     """
-    rolling window calculation for an xr.ds by defined window size (1-h, 3-h, 6-h, etc)
+    rolling window calculation for an xr.ds by defined window size (3-h, 6-h, etc)
     """
     print(f"Starting calculation of rolling {str(window_size)}-h accumulated precip!")
     ds_window = ds.rolling(time=window_size, min_periods=window_size).construct("new").sum("new", skipna=True)
     print(f"Finished calculating rolling {str(window_size)}-h accumulated precip!")
 
     return ds_window
+
+
+def initialise_dask_client(n_workers=8, 
+                           threads_per_worker=1, 
+                           memory_limit="auto"):
+    """
+    Initialize a Dask client for parallel processing.
+
+    Args:
+        n_workers (int): Number of Dask workers to use.
+        threads_per_worker (int): Number of threads per worker.
+        memory_limit (str): Memory limit per worker (e.g., '4GB', 'auto').
+    Returns:
+        Client: A Dask client object.
+    """
+    client = Client(n_workers=n_workers, threads_per_worker=threads_per_worker, memory_limit=memory_limit)
+    print(f"Dask client initialized: {client}")
+    return client
+
+
+def call_main(ukcp_url: str,
+              config: Dict,
+              output_file_path: str,
+              member_id: int,
+              var_id: str,
+              proj_id: str,
+              mask_1D: xr.Dataset
+              ):
+    """ 
+    Call the main function to read in UKCP data for the chosen year and month 
+    """
+
+    if not os.path.isdir(output_file_path):
+        os.makedirs(output_file_path)
+
+    current_year, current_month, previous_month_url = get_previous_month_url(ukcp_url)
+
+    if (current_year==1980 and current_month==12) or (current_year==2020 and current_month==12) or (current_year==2060 and current_month==12):
+        input_file_path = [ukcp_url]
+    else:
+        input_file_path = [previous_month_url, ukcp_url]
+
+    process_ukcp_data(input_file_path, 
+                      output_file_path,
+                      config,
+                      current_year, 
+                      current_month, 
+                      member_id, 
+                      var_id,
+                      proj_id, 
+                      mask_1D)
