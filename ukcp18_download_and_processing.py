@@ -19,7 +19,7 @@ def call_api_and_process_ukcp_data(ukcp_url: str,
     """
 
     # client is using the following environment: /home/jbanorthwest.co.uk/samhardy/miniforge3/envs/2024s1475-env/bin/python 
-    client = processing.initialise_dask_client(n_workers=8, threads_per_worker=1, memory_limit="4GB")
+    #client = processing.initialise_dask_client(n_workers=8, threads_per_worker=1, memory_limit="4GB")
 
     config = load_config(config_file_path)
     mask_ds = xr.open_dataset(config["mask_nc_filename"])

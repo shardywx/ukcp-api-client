@@ -119,7 +119,7 @@ def open_datasets(urls: list[str],
                 f"Failed to fetch data. The response from the server was {response.status_code}"
             )
             return
-        
+
         filename = os.path.basename(urlparse(url).path)
         print(f"Opening Dataset from file {filename} ...")
         datasets.append(Dataset(filename, memory=response.content))

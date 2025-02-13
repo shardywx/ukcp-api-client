@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Date last modified: Wed 12 Feb 2025
+# Date last modified: Tue 11 Feb 2025
 #
 # Purpose: Runs the ukcp18_download_and_processing.py script for 
 #          each monthly file of hourly data in the UKCP Local 
@@ -13,10 +13,11 @@
 #          ensemble member (ens_id) at a time. These are to be 
 #          specified by the user before running.
 #
-# Usage: ./ukcp18_wrapper_script.sh proj3_test.txt 01
-#         'proj3_test.txt' contains a list of year-month values (e.g. 202503,203207) to run our processing code for 
+# Usage: ./ukcp18_wrapper_script_error_processing.sh proj3_01_error_months_v1.txt 01 v1
+#         'proj3_01_error_months_v1.txt' contains a list of year-month values (e.g. 202503,203207) to loop over  
 #         'proj3' = projection ID (2,3) representing the 20-year period we are analysing (e.g. 2000-2020) 
 #         '01' = ensemble member ID (01,04,05,06,07,08,09,10,11,12,13,15)
+#         'v1' = error processing iteration (i.e. v1 = first iteration, v2 = second iteration) 
 #
 #
 # Author: Sam Hardy (original code by Christine McKenna)
@@ -47,6 +48,7 @@ if [[ -s $input_file ]]; then
   # User changeable parameters
   var_id=pr
   ens_id=$2
+  dir_id=$3
 
   # Define set parameters
   url0=https://dap.ceda.ac.uk/badc/ukcp18/data/land-cpm
@@ -54,8 +56,7 @@ if [[ -s $input_file ]]; then
   url2=${var_id}_rcp85_land-cpm_uk_2.2km_${ens_id}_1hr
   base_url=${url0}/${url1}/${url2}
   config_path=/mnt/metdata/2024s1475/InputData/config.json
-  # reformat the line below to add 'v2' as an input argument 
-  outdir=/mnt/metdata/2024s1475/UKCP18_Processing_2024/precip_profiles/proj${proj_id}/output_mem${ens_id}/
+  outdir=/mnt/metdata/2024s1475/UKCP18_Processing_2024/precip_profiles/proj${proj_id}/output_mem${ens_id}/${dir_id}/
 
   # Loop over monthly files, extracting and processing data
   for month in $error_months; do

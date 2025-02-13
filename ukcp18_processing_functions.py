@@ -270,9 +270,10 @@ def get_bin_counts(df_prcp: pd.DataFrame,
     Calculate rainfall counts for specified bins relevant to the chosen event duration (e.g. 1-h, 3-h, 6-h)
     For September, the first and second halves are counted separately for a reason that Kay explained to be (but I've forgotten)
     """
-    import pandas as pd
-    import cftime
-    import os
+    ### UNCOMMENT LINES BELOW IF ATTEMPTING TO USE DASK FOR PARALLEL PROCESSING 
+    # import pandas as pd
+    # import cftime
+    # import os
 
     BINS = {int(key): value for key, value in config["BINS"].items()}
     bins = BINS[duration]
@@ -303,8 +304,9 @@ def get_bin_counts(df_prcp: pd.DataFrame,
             total_count.append(df_count.shape[0])
 
         # trigger computation for all counts at once 
-        early_sept_count = [df_early_sept_count.compute() if hasattr(df_early_sept_count, "compute") else df_early_sept_count for df_early_sept_count in early_sept_count]
-        total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
+        # UNCOMMENT TWO LINES BELOW TO USE DASK FOR PARALLEL PROCESSING 
+        # early_sept_count = [df_early_sept_count.compute() if hasattr(df_early_sept_count, "compute") else df_early_sept_count for df_early_sept_count in early_sept_count]
+        # total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
 
         early_sept_data_list = [proj_id, member_id, year, 13, wcid, early_sept_count]
         early_sept_count_df = pd.DataFrame([early_sept_data_list], columns=cols)
@@ -325,7 +327,8 @@ def get_bin_counts(df_prcp: pd.DataFrame,
             total_count.append(df_count.shape[0])
 
         # trigger computation for all counts at once 
-        total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
+        # UNCOMMENT LINE BELOW TO USE DASK FOR PARALLEL PROCESSING 
+        #total_count = [df_count.compute() if hasattr(df_count, "compute") else df_count for df_count in total_count]
 
         data_list = [proj_id, member_id, year, month, wcid, total_count]
         total_count_df = pd.DataFrame([data_list], columns=cols)
